@@ -21,7 +21,7 @@ import ai.djl.translate.Pipeline;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.util.Arrays;
+import java.util.Map;
 
 public class Main {
     public static void main(String[] args) throws ModelNotFoundException, MalformedModelException, IOException, TranslateException {
@@ -37,16 +37,19 @@ public class Main {
         ImageClassificationTranslator translator = ImageClassificationTranslator.builder()
                 .setPipeline(pipeline)
                 .optSynsetArtifactName("synset.txt")
+                .optApplySoftmax(true)
                 .build();
 
-        // 配置模型标准
+        // 配置模型标准 - 使用更明确的模型规格
         Criteria<Image, Classifications> criteria = Criteria.builder()
                 .optApplication(Application.CV.IMAGE_CLASSIFICATION)
                 .setTypes(Image.class, Classifications.class)
-                .optModelUrls("https://mlrepo.djl.ai/model/cv/image_classification/ai/djl/pytorch/resnet/0.0.1/resnet50.zip")
+                .optModelName("traced_resnet50") // 使用明确的模型名称
+                .optFilter("layers", "50")
+                .optFilter("dataset", "imagenet")
+                .optEngine("PyTorch")
                 .optProgress(new ProgressBar())
                 .optTranslator(translator)
-                .optEngine("PyTorch")
                 .build();
 
         System.out.println("Starting model download and loading...");
@@ -65,13 +68,16 @@ public class Main {
                 Classifications classifications = predictor.predict(img);
 
                 // Print top-5 predictions
-                System.out.println("\nTop 5 Predictions:");
+                System.out.println("\nTop 10 Predictions:");
                 classifications.items().stream()
-                        .limit(5)
+                        .limit(10)
                         .forEach(classification ->
                                 System.out.printf("Class: %-30s Probability: %.2f%%\n",
                                         classification.getClassName(),
                                         classification.getProbability() * 100));
+                var topPrediction = classifications.best();
+                System.out.println("最佳预测: " + topPrediction.getClassName() +
+                        " (置信度: " + topPrediction.getProbability() * 100 + "%)");
             }
         }
     }
