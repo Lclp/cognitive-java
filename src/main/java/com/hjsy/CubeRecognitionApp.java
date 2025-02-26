@@ -3,6 +3,7 @@ package com.hjsy;
 import ai.djl.Application;
 import ai.djl.Model;
 import ai.djl.ModelException;
+import ai.djl.basicdataset.cv.classification.ImageFolder;
 import ai.djl.inference.Predictor;
 import ai.djl.modality.Classifications;
 import ai.djl.modality.cv.Image;
@@ -12,8 +13,8 @@ import ai.djl.modality.cv.transform.Resize;
 import ai.djl.modality.cv.transform.ToTensor;
 import ai.djl.modality.cv.translator.ImageClassificationTranslator;
 import ai.djl.ndarray.NDArray;
-import ai.djl.ndarray.NDList;
 import ai.djl.ndarray.NDManager;
+import ai.djl.ndarray.types.Shape;
 import ai.djl.nn.Block;
 import ai.djl.nn.SequentialBlock;
 import ai.djl.nn.core.Linear;
@@ -23,19 +24,18 @@ import ai.djl.repository.zoo.ZooModel;
 import ai.djl.training.DefaultTrainingConfig;
 import ai.djl.training.EasyTrain;
 import ai.djl.training.Trainer;
-import ai.djl.training.dataset.Batch;
 import ai.djl.training.dataset.Dataset;
 import ai.djl.training.dataset.RandomAccessDataset;
 import ai.djl.training.evaluator.Accuracy;
 import ai.djl.training.listener.TrainingListener;
 import ai.djl.training.loss.Loss;
-import ai.djl.training.optimizer.Optimizer;
 import ai.djl.training.optimizer.Adam;
+import ai.djl.training.tracker.Tracker;
 import ai.djl.training.util.ProgressBar;
 import ai.djl.translate.Pipeline;
 import ai.djl.translate.TranslateException;
 import ai.djl.translate.Translator;
-import ai.djl.util.Progress;
+import ai.djl.util.Pair;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -112,7 +112,7 @@ public class CubeRecognitionApp {
             DefaultTrainingConfig config = setupTrainingConfig();
 
             try (Trainer trainer = model.newTrainer(config)) {
-                // 初始化训练器
+                // 初始化训练器 - 使用DJL的Shape类
                 trainer.initialize(new Shape(BATCH_SIZE, 1, IMAGE_HEIGHT, IMAGE_WIDTH));
 
                 // 开始训练
@@ -168,16 +168,18 @@ public class CubeRecognitionApp {
 
     private static SequentialBlock modifyLastLayer(Block baseBlock, int numClasses) {
         // 这里需要根据DoodleNet的具体结构修改
-        // 这是一个简化的示例，假设DoodleNet是一个SequentialBlock
         SequentialBlock newBlock = new SequentialBlock();
 
-        // 假设baseBlock是一个SequentialBlock，我们可以获取除了最后一层以外的所有层
-        // 在实际应用中，您需要根据具体模型结构调整这部分代码
+        // 处理SequentialBlock类型的baseBlock
         if (baseBlock instanceof SequentialBlock) {
             SequentialBlock sequential = (SequentialBlock) baseBlock;
+            // 获取子层列表
+            var children = sequential.getChildren();
             // 复制除了最后一层以外的所有层
-            for (int i = 0; i < sequential.getChildren().size() - 1; i++) {
-                newBlock.add(sequential.getChildren().get(i));
+            for (int i = 0; i < children.size() - 1; i++) {
+                // 从Pair中获取Block对象
+                Block childBlock = children.get(i).getValue();
+                newBlock.add(childBlock);
             }
         } else {
             // 如果不是SequentialBlock，可能需要更复杂的处理
@@ -190,24 +192,20 @@ public class CubeRecognitionApp {
         return newBlock;
     }
 
+
     private static DefaultTrainingConfig setupTrainingConfig() {
         return new DefaultTrainingConfig(Loss.softmaxCrossEntropyLoss())
                 .addEvaluator(new Accuracy())
                 .optOptimizer(Adam.builder().optLearningRateTracker(
                         Tracker.fixed(0.001f)).build())
-                .addTrainingListeners(TrainingListener.Defaults.logging())
-                .setBatchSize(BATCH_SIZE);
+                .addTrainingListeners(TrainingListener.Defaults.logging());
     }
 
     private static RandomAccessDataset getDataset(Dataset.Usage usage) {
-        // 这里应该返回您的数据集
-        // 您需要实现自己的数据集加载逻辑
-        // 可以使用ImageFolder或自定义RandomAccessDataset实现
-
-        // 示例代码:
+        // 使用ImageFolder加载数据集
         ImageFolder dataset = ImageFolder.builder()
                 .setRepositoryPath(Paths.get(DATASET_DIR))
-                .optUsage(usage)
+                //.setUsage(usage)
                 .addTransform(new Resize(IMAGE_WIDTH, IMAGE_HEIGHT))
                 .addTransform(new ToTensor())
                 .addTransform(new Normalize(new float[] {0.5f}, new float[] {0.5f}))
@@ -218,6 +216,8 @@ public class CubeRecognitionApp {
             dataset.prepare();
         } catch (IOException e) {
             throw new RuntimeException("Failed to prepare dataset", e);
+        } catch (TranslateException e) {
+            throw new RuntimeException(e);
         }
 
         return dataset;
@@ -244,19 +244,6 @@ public class CubeRecognitionApp {
 
             // 如果已经是灰度图，直接返回
             return image;
-        }
-    }
-
-    // 这个内部类用于跟踪训练进度
-    private static class Shape {
-        private final long[] shape;
-
-        public Shape(long... shape) {
-            this.shape = shape;
-        }
-
-        public long[] getShape() {
-            return shape;
         }
     }
 }

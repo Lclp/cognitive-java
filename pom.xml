@@ -37,6 +37,12 @@
             <artifactId>pytorch-model-zoo</artifactId>
             <version>${djl.version}</version>
         </dependency>
+        <!-- DJL基础数据集 - 包含ImageFolder类 -->
+        <dependency>
+            <groupId>ai.djl</groupId>
+            <artifactId>basicdataset</artifactId>
+            <version>${djl.version}</version>
+        </dependency>
 
         <!-- PyTorch Native Library -->
         <dependency>
