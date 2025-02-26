@@ -1,6 +1,5 @@
 package com.hjsy;
 
-import ai.djl.Application;
 import ai.djl.Model;
 import ai.djl.ModelException;
 import ai.djl.basicdataset.cv.classification.ImageFolder;
@@ -8,6 +7,7 @@ import ai.djl.inference.Predictor;
 import ai.djl.modality.Classifications;
 import ai.djl.modality.cv.Image;
 import ai.djl.modality.cv.ImageFactory;
+import ai.djl.modality.cv.transform.CenterCrop;
 import ai.djl.modality.cv.transform.Normalize;
 import ai.djl.modality.cv.transform.Resize;
 import ai.djl.modality.cv.transform.ToTensor;
@@ -15,12 +15,12 @@ import ai.djl.modality.cv.translator.ImageClassificationTranslator;
 import ai.djl.ndarray.NDArray;
 import ai.djl.ndarray.NDManager;
 import ai.djl.ndarray.types.Shape;
-import ai.djl.nn.Block;
+import ai.djl.nn.Activation;
+import ai.djl.nn.Blocks;
 import ai.djl.nn.SequentialBlock;
+import ai.djl.nn.convolutional.Conv2d;
 import ai.djl.nn.core.Linear;
-import ai.djl.repository.zoo.Criteria;
-import ai.djl.repository.zoo.ModelZoo;
-import ai.djl.repository.zoo.ZooModel;
+import ai.djl.nn.pooling.Pool;
 import ai.djl.training.DefaultTrainingConfig;
 import ai.djl.training.EasyTrain;
 import ai.djl.training.Trainer;
@@ -31,18 +31,15 @@ import ai.djl.training.listener.TrainingListener;
 import ai.djl.training.loss.Loss;
 import ai.djl.training.optimizer.Adam;
 import ai.djl.training.tracker.Tracker;
-import ai.djl.training.util.ProgressBar;
 import ai.djl.translate.Pipeline;
 import ai.djl.translate.TranslateException;
-import ai.djl.translate.Translator;
-import ai.djl.util.Pair;
 
+import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.Arrays;
-import java.util.List;
 
 public class CubeRecognitionApp {
 
@@ -53,38 +50,79 @@ public class CubeRecognitionApp {
     private static final int IMAGE_HEIGHT = 28;
     private static final int BATCH_SIZE = 32;
     private static final int EPOCHS = 10;
+    private static final int NUM_CHANNELS = 3;  // 设置为3，表示RGB图像
 
     public static void main(String[] args) throws IOException, ModelException, TranslateException {
         // 确保目录存在
         Path modelDir = Paths.get(MODEL_DIR);
         Files.createDirectories(modelDir);
-        trainModel();
-        predictImage(args[1]);
 
-        // 检查命令行参数
+        //System.out.println("=== 开始训练模型 ===");
+        //trainModel();
 
+        System.out.println("\n=== 开始测试模型 ===");
+        // 测试一些样本图片
+        String testImageDir = DATASET_DIR + "_test";
+        File cubeDir = new File(testImageDir + "/cube");
+        File notCubeDir = new File(testImageDir + "/not_cube");
+
+        if (cubeDir.exists() && cubeDir.isDirectory()) {
+            File[] cubeImages = cubeDir.listFiles((dir, name) -> name.toLowerCase().endsWith(".jpg") ||
+                    name.toLowerCase().endsWith(".jpeg") ||
+                    name.toLowerCase().endsWith(".png"));
+            if (cubeImages != null && cubeImages.length > 0) {
+                System.out.println("测试包含立方体的图片:");
+                for (int i = 0; i < Math.min(3, cubeImages.length); i++) {
+                    predictImage(cubeImages[i].getPath());
+                }
+            }
+        }
+
+        if (notCubeDir.exists() && notCubeDir.isDirectory()) {
+            File[] notCubeImages = notCubeDir.listFiles((dir, name) -> name.toLowerCase().endsWith(".jpg") ||
+                    name.toLowerCase().endsWith(".jpeg") ||
+                    name.toLowerCase().endsWith(".png"));
+            if (notCubeImages != null && notCubeImages.length > 0) {
+                System.out.println("\n测试不包含立方体的图片:");
+                for (int i = 0; i < Math.min(3, notCubeImages.length); i++) {
+                    predictImage(notCubeImages[i].getPath());
+                }
+            }
+        }
+
+        System.out.println("\n=== 模型训练和测试完成 ===");
     }
 
     private static void trainModel() throws IOException, ModelException, TranslateException {
-        System.out.println("Loading DoodleNet base model...");
+        System.out.println("创建简单CNN模型...");
 
-        // 加载预训练的DoodleNet模型
-        Criteria<Image, Classifications> criteria = Criteria.builder()
-                .optApplication(Application.CV.IMAGE_CLASSIFICATION)
-                .setTypes(Image.class, Classifications.class)
-                .optModelName("doodlenet")
-                .optProgress(new ProgressBar())
-                .build();
+        try (Model model = Model.newInstance("cube-detector")) {
+            // 创建一个简单的CNN网络
+            SequentialBlock block = new SequentialBlock();
 
-        try (ZooModel<Image, Classifications> doodleNet = ModelZoo.loadModel(criteria);
-             Model model = Model.newInstance("cube-detector")) {
+            // 第一个卷积层
+            block.add(Conv2d.builder()
+                    .setKernelShape(new Shape(3, 3))
+                    .setFilters(16)
+                    .build());
+            block.add(Activation::relu);
+            block.add(Pool.maxPool2dBlock(new Shape(2, 2), new Shape(2, 2)));
 
-            // 获取DoodleNet的基础网络
-            Block baseBlock = doodleNet.getBlock();
+            // 第二个卷积层
+            block.add(Conv2d.builder()
+                    .setKernelShape(new Shape(3, 3))
+                    .setFilters(32)
+                    .build());
+            block.add(Activation::relu);
+            block.add(Pool.maxPool2dBlock(new Shape(2, 2), new Shape(2, 2)));
 
-            // 创建新模型，替换最后一层以适应我们的分类任务
-            SequentialBlock newBlock = modifyLastLayer(baseBlock, CLASS_NAMES.length);
-            model.setBlock(newBlock);
+            // 全连接层
+            block.add(Blocks.batchFlattenBlock());
+            block.add(Linear.builder().setUnits(64).build());
+            block.add(Activation::relu);
+            block.add(Linear.builder().setUnits(CLASS_NAMES.length).build());
+
+            model.setBlock(block);
 
             // 加载训练和验证数据集
             RandomAccessDataset trainingSet = getDataset(Dataset.Usage.TRAIN);
@@ -94,17 +132,17 @@ public class CubeRecognitionApp {
             DefaultTrainingConfig config = setupTrainingConfig();
 
             try (Trainer trainer = model.newTrainer(config)) {
-                // 初始化训练器 - 使用DJL的Shape类
-                trainer.initialize(new Shape(BATCH_SIZE, 1, IMAGE_HEIGHT, IMAGE_WIDTH));
+                // 初始化训练器 - 注意这里使用3通道
+                trainer.initialize(new Shape(BATCH_SIZE, NUM_CHANNELS, IMAGE_HEIGHT, IMAGE_WIDTH));
 
                 // 开始训练
-                System.out.println("Starting model training...");
+                System.out.println("开始模型训练...");
                 EasyTrain.fit(trainer, EPOCHS, trainingSet, validationSet);
 
                 // 保存模型
                 Path modelPath = Paths.get(MODEL_DIR, "cube-model");
                 model.save(modelPath, "cube-detector");
-                System.out.println("Model trained and saved to: " + modelPath);
+                System.out.println("模型训练完成并保存到: " + modelPath);
             }
         }
     }
@@ -113,21 +151,23 @@ public class CubeRecognitionApp {
         Path modelPath = Paths.get(MODEL_DIR, "cube-model");
 
         if (!Files.exists(modelPath)) {
-            System.out.println("Model not found. Please train the model first.");
+            System.out.println("未找到模型。请先训练模型。");
             return;
         }
 
-        // 加载我们的自定义模型
+        // 加载模型
         Model model = Model.newInstance("cube-detector");
         model.load(modelPath);
 
-        // 创建图像分类转换器
+        // 创建图像分类转换器 - 使用3通道归一化参数
         Pipeline pipeline = new Pipeline()
                 .add(new Resize(IMAGE_WIDTH, IMAGE_HEIGHT))
                 .add(new ToTensor())
-                .add(new Normalize(new float[] {0.5f}, new float[] {0.5f}));
+                .add(new Normalize(
+                        new float[] {0.485f, 0.456f, 0.406f},
+                        new float[] {0.229f, 0.224f, 0.225f}));
 
-        Translator<Image, Classifications> translator = ImageClassificationTranslator.builder()
+        ImageClassificationTranslator translator = ImageClassificationTranslator.builder()
                 .setPipeline(pipeline)
                 .optSynset(Arrays.asList(CLASS_NAMES))
                 .build();
@@ -136,44 +176,14 @@ public class CubeRecognitionApp {
             // 加载图像
             Image img = ImageFactory.getInstance().fromFile(Paths.get(imagePath));
 
-            // 预处理图像 - 转为灰度图
-            img = convertToGrayscale(img);
-
             // 预测
             Classifications result = predictor.predict(img);
 
             // 输出结果
-            System.out.println("Prediction results:");
-            System.out.println(result);
+            System.out.println("图片: " + imagePath);
+            System.out.println("预测结果: " + result);
         }
     }
-
-    private static SequentialBlock modifyLastLayer(Block baseBlock, int numClasses) {
-        // 这里需要根据DoodleNet的具体结构修改
-        SequentialBlock newBlock = new SequentialBlock();
-
-        // 处理SequentialBlock类型的baseBlock
-        if (baseBlock instanceof SequentialBlock) {
-            SequentialBlock sequential = (SequentialBlock) baseBlock;
-            // 获取子层列表
-            var children = sequential.getChildren();
-            // 复制除了最后一层以外的所有层
-            for (int i = 0; i < children.size() - 1; i++) {
-                // 从Pair中获取Block对象
-                Block childBlock = children.get(i).getValue();
-                newBlock.add(childBlock);
-            }
-        } else {
-            // 如果不是SequentialBlock，可能需要更复杂的处理
-            throw new UnsupportedOperationException("Base model block is not a SequentialBlock");
-        }
-
-        // 添加新的分类层
-        newBlock.add(Linear.builder().setUnits(numClasses).build());
-
-        return newBlock;
-    }
-
 
     private static DefaultTrainingConfig setupTrainingConfig() {
         return new DefaultTrainingConfig(Loss.softmaxCrossEntropyLoss())
@@ -184,48 +194,23 @@ public class CubeRecognitionApp {
     }
 
     private static RandomAccessDataset getDataset(Dataset.Usage usage) {
-        // 使用ImageFolder加载数据集
+        // 使用ImageFolder加载数据集 - 使用3通道归一化参数
         ImageFolder dataset = ImageFolder.builder()
                 .setRepositoryPath(Paths.get(DATASET_DIR))
-                //.setUsage(usage)
                 .addTransform(new Resize(IMAGE_WIDTH, IMAGE_HEIGHT))
                 .addTransform(new ToTensor())
-                .addTransform(new Normalize(new float[] {0.5f}, new float[] {0.5f}))
+                .addTransform(new Normalize(
+                        new float[] {0.485f, 0.456f, 0.406f},  // RGB通道的均值
+                        new float[] {0.229f, 0.224f, 0.225f})) // RGB通道的标准差
                 .setSampling(BATCH_SIZE, true)
                 .build();
 
         try {
             dataset.prepare();
-        } catch (IOException e) {
+        } catch (IOException | TranslateException e) {
             throw new RuntimeException("Failed to prepare dataset", e);
-        } catch (TranslateException e) {
-            throw new RuntimeException(e);
         }
 
         return dataset;
-    }
-
-    private static Image convertToGrayscale(Image image) {
-        // 使用NDArray操作将彩色图像转换为灰度图
-        try (NDManager manager = NDManager.newBaseManager()) {
-            NDArray array = image.toNDArray(manager);
-
-            // 如果是彩色图像，转换为灰度图
-            if (array.getShape().dimension() > 2 && array.getShape().get(2) == 3) {
-                // RGB转灰度公式: 0.299 * R + 0.587 * G + 0.114 * B
-                NDArray r = array.get(":, :, 0");
-                NDArray g = array.get(":, :, 1");
-                NDArray b = array.get(":, :, 2");
-
-                NDArray gray = r.mul(0.299f).add(g.mul(0.587f)).add(b.mul(0.114f));
-                gray = gray.expandDims(2); // 添加通道维度
-
-                // 创建新图像
-                return ImageFactory.getInstance().fromNDArray(gray);
-            }
-
-            // 如果已经是灰度图，直接返回
-            return image;
-        }
     }
 }
