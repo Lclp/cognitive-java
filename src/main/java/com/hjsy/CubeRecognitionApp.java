@@ -58,29 +58,11 @@ public class CubeRecognitionApp {
         // 确保目录存在
         Path modelDir = Paths.get(MODEL_DIR);
         Files.createDirectories(modelDir);
+        trainModel();
+        predictImage(args[1]);
 
         // 检查命令行参数
-        if (args.length > 0) {
-            String command = args[0];
-            switch (command) {
-                case "train":
-                    trainModel();
-                    break;
-                case "predict":
-                    if (args.length < 2) {
-                        System.out.println("Usage: java CubeRecognitionApp predict <image_path>");
-                        return;
-                    }
-                    predictImage(args[1]);
-                    break;
-                default:
-                    System.out.println("Unknown command: " + command);
-                    System.out.println("Available commands: train, predict");
-            }
-        } else {
-            System.out.println("Usage: java CubeRecognitionApp <command> [args]");
-            System.out.println("Available commands: train, predict");
-        }
+
     }
 
     private static void trainModel() throws IOException, ModelException, TranslateException {
