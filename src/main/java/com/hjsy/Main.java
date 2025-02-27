@@ -3,6 +3,13 @@ package com.hjsy;
 import ai.djl.Application;
 import ai.djl.MalformedModelException;
 import ai.djl.Model;
+import ai.djl.basicdataset.cv.classification.ImageFolder;
+import ai.djl.modality.cv.ImageFactory;
+import ai.djl.ndarray.NDList;
+import ai.djl.training.EasyTrain;
+import ai.djl.training.dataset.Batch;
+import ai.djl.training.evaluator.Evaluator;
+import ai.djl.translate.Pipeline;
 import ai.djl.inference.Predictor;
 import ai.djl.modality.Classifications;
 import ai.djl.modality.cv.Image;
@@ -26,10 +33,12 @@ import ai.djl.training.dataset.Dataset;
 import ai.djl.training.evaluator.Accuracy;
 import ai.djl.training.loss.Loss;
 import ai.djl.training.optimizer.Optimizer;
+import ai.djl.translate.Pipeline;
 import ai.djl.translate.TranslateException;
 import ai.djl.translate.Translator;
 
 import java.io.IOException;
+import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.Arrays;
 import java.util.List;
@@ -41,41 +50,38 @@ public class Main {
         Criteria<Image, Classifications> criteria = Criteria.builder()
                 .optApplication(Application.CV.IMAGE_CLASSIFICATION)
                 .setTypes(Image.class, Classifications.class)
-                .optModelName("resnet50")
+                .optModelName("traced_resnet50")
                 .optEngine("PyTorch")  // 或 "MXNet", 取决于您的环境
                 .build();
 
         ZooModel<Image, Classifications> baseModel = ModelZoo.loadModel(criteria);
 
-        // 2. 获取模型的基础结构
-        SymbolBlock baseBlock = (SymbolBlock) baseModel.getBlock();
-
-        // 3. 创建新模型
+        // 2. 创建新模型
         Model model = Model.newInstance("cube-detector");
 
-        // 4. 创建新的网络结构
+        // 3. 创建新的网络结构
         SequentialBlock newBlock = new SequentialBlock();
 
-        // 5. 提取ResNet的特征提取部分（除了最后一层全连接层）
-        // 这里需要根据实际的模型结构来调整
-        // 假设ResNet50的结构是：[conv1, bn1, relu, maxpool, layer1, layer2, layer3, layer4, avgpool, fc]
+        // 4. 获取预训练模型的Block
+        Block baseBlock = baseModel.getBlock();
 
-        // 获取ResNet50的最后一层全连接层之前的所有层
-        baseBlock.removeLastBlock();  // 移除最后的fc层
+        // 5. 添加预训练模型的Block到新模型
         newBlock.add(baseBlock);
 
-        // 6. 冻结特征提取部分的参数，使其在训练中不更新
-        // 注意：在DJL中，可以通过设置参数的requiresGradient属性来实现
+        // 6. 冻结预训练模型的参数
         baseBlock.freezeParameters(true);
 
-        // 7. 添加新的分类层 - 假设我们有两个类别：立方体和非立方体
-        // 获取特征提取器输出的特征维度，通常是2048（对于ResNet50）
-        int featureDim = 2048;  // ResNet50的特征维度
-        int numClasses = 2;     // 立方体和非立方体
+        // 7. 添加新的分类层
+        // 这里我们使用一个适配器层来处理ResNet50的输出
+        newBlock.add(ndList -> {
+            // 假设ResNet50的输出是[batch_size, 2048, 1, 1]
+            // 我们需要将其转换为[batch_size, 2048]
+            return new NDList(ndList.get(0).squeeze());
+        });
 
-        // 添加新的全连接层
+        // 添加新的全连接层，用于分类
         newBlock.add(Linear.builder()
-                .setUnits(numClasses)
+                .setUnits(2)  // 2个类别：立方体和非立方体
                 .build());
 
         // 8. 设置模型的网络结构
@@ -95,41 +101,76 @@ public class Main {
             trainer.initialize(new Shape(32, 3, 224, 224));
 
             // 12. 训练模型
-            // 这里需要您准备好的训练数据集和验证数据集
-            // Dataset trainDataset = ...
-            // Dataset validationDataset = ...
+            // 创建数据预处理管道
+            Pipeline pipeline = new Pipeline()
+                    .add(new Resize(224, 224))
+                    .add(new ToTensor())
+                    .add(new Normalize(
+                            new float[] {0.485f, 0.456f, 0.406f},
+                            new float[] {0.229f, 0.224f, 0.225f}));
+
+            // 加载训练数据集
+            ImageFolder trainDataset = ImageFolder.builder()
+                    .setRepositoryPath(Paths.get("dataset")) // 替换为您的数据集路径
+                    .optPipeline(pipeline)
+                    .setSampling(32, true) // 批量大小为32
+                    .build();
+
+            trainDataset.prepare();
+
+            // 可选：创建验证数据集
+            ImageFolder validationDataset = ImageFolder.builder()
+                    .setRepositoryPath(Paths.get("dataset_test")) // 如果有验证集
+                    .optPipeline(pipeline)
+                    .setSampling(32, true)
+                    .build();
+
+            validationDataset.prepare();
 
             System.out.println("开始训练模型...");
             int numEpochs = 10;
 
-            // 实际训练代码（取决于您的数据集）
-            /*
+            // 实际训练代码
             for (int epoch = 0; epoch < numEpochs; epoch++) {
                 System.out.printf("Epoch %d/%d\n", epoch + 1, numEpochs);
 
                 // 训练一个epoch
+                int batchCount = 0;
                 for (Batch batch : trainer.iterateDataset(trainDataset)) {
                     EasyTrain.trainBatch(trainer, batch);
                     trainer.step();
                     batch.close();
+
+                    // 每处理10个批次打印一次进度
+                    if (++batchCount % 10 == 0) {
+                        System.out.printf("Processed %d batches\n", batchCount);
+                    }
                 }
 
                 // 验证
-                for (Batch batch : trainer.iterateDataset(validationDataset)) {
-                    EasyTrain.validateBatch(trainer, batch);
-                    batch.close();
+                if (validationDataset != null) {
+                    System.out.println("Validating...");
+                    batchCount = 0;
+                    for (Batch batch : trainer.iterateDataset(validationDataset)) {
+                        EasyTrain.validateBatch(trainer, batch);
+                        batch.close();
+
+                        // 每处理10个批次打印一次进度
+                        if (++batchCount % 10 == 0) {
+                            System.out.printf("Validated %d batches\n", batchCount);
+                        }
+                    }
+
+                    // 输出训练指标
+                    System.out.println("验证结果:");
+                    for (Evaluator evaluator : trainer.getEvaluators()) {
+                        System.out.println(evaluator);
+                    }
                 }
-
-                // 输出训练指标
-                float accuracy = trainer.getEvaluators().get(0).getMetric().getValue();
-                System.out.printf("Accuracy: %.2f%%\n", accuracy * 100);
             }
-            */
-
-            // 13. 保存模型
-            model.save(Paths.get("./"), "cube-detector");
-            System.out.println("模型已保存为 cube-detector");
         }
+        Path modelPath = Paths.get("./models/");
+        model.save(modelPath, "cube-detector-01");
 
         // 14. 创建模型推理所需的翻译器
         List<String> classes = Arrays.asList("非立方体", "立方体");
@@ -145,13 +186,43 @@ public class Main {
 
         // 15. 加载保存的模型并创建预测器
         Model savedModel = Model.newInstance("cube-detector");
-        savedModel.load(Paths.get("./"), "cube-detector");
+        savedModel.load(modelPath, "cube-detector-01");
 
         try (Predictor<Image, Classifications> predictor = savedModel.newPredictor(translator)) {
-            // 16. 在这里可以使用predictor进行预测
-            // Image img = ...
-            // Classifications result = predictor.predict(img);
-            // System.out.println(result);
+            // 16. 单个图像预测
+            String testImagePath = "test.jpg"; // 替换为您的测试图像路径
+            Image img = ImageFactory.getInstance().fromFile(Paths.get(testImagePath));
+
+            // 进行预测
+            Classifications result = predictor.predict(img);
+
+            // 打印预测结果
+            System.out.println("预测结果:");
+            System.out.println(result);
+
+            // 获取最可能的类别
+            String topClassName = result.best().getClassName();
+            double topProbability = result.best().getProbability();
+            System.out.printf("图像最可能是: %s，概率: %.2f%%\n",
+                    topClassName, topProbability * 100);
+
+            // 批量预测多个图像
+            //String testImagesDir = "path/to/test/images"; // 替换为您的测试图像文件夹路径
+            //java.io.File dir = new java.io.File(testImagesDir);
+            //java.io.File[] files = dir.listFiles((d, name) -> name.endsWith(".jpg") || name.endsWith(".png"));
+            //
+            //if (files != null) {
+            //    System.out.println("\n批量预测结果:");
+            //    for (java.io.File file : files) {
+            //        Image testImg = ImageFactory.getInstance().fromFile(file.toPath());
+            //        Classifications testResult = predictor.predict(testImg);
+            //
+            //        System.out.printf("图像 %s: 预测为 %s，概率: %.2f%%\n",
+            //                file.getName(),
+            //                testResult.best().getClassName(),
+            //                testResult.best().getProbability() * 100);
+            //    }
+            //}
         }
     }
 }
