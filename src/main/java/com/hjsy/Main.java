@@ -47,7 +47,7 @@ public class Main {
 
     public static void main(String[] args) throws IOException, ModelNotFoundException, MalformedModelException, TranslateException {
         // 使用 PyTorch 引擎
-        String engineName = "PyTorch";
+        String engineName = "MXNet";
         Engine engine = Engine.getEngine(engineName);
         System.out.println("使用引擎: " + engineName);
 
@@ -59,7 +59,7 @@ public class Main {
         Files.createDirectories(modelDir);
 
         // 检查 PyTorch 模型文件是否存在
-        Path pytorchModelPath = modelDir.resolve(modelName + ".pt");
+        Path pytorchModelPath = modelDir.resolve(modelName + "-0000.params");
         boolean pytorchModelExists = Files.exists(pytorchModelPath);
 
         Model model;
@@ -158,7 +158,7 @@ public class Main {
                 }
 
                 System.out.println("开始训练模型...");
-                int numEpochs = 10;
+                int numEpochs = 20;
 
                 // 实际训练代码
                 for (int epoch = 0; epoch < numEpochs; epoch++) {
@@ -201,6 +201,7 @@ public class Main {
             }
 
             // 13. 保存训练好的模型到明确的路径
+            model.setProperty("engine",engineName);
             model.save(modelDir, modelName);
             System.out.println("模型已保存到: " + modelDir.toAbsolutePath());
         }
@@ -220,7 +221,7 @@ public class Main {
         // 15. 使用加载的模型进行预测
         try (Predictor<Image, Classifications> predictor = model.newPredictor(translator)) {
             // 16. 单个图像预测
-            String testImagePath = "test.jpg"; // 替换为您的测试图像路径
+            String testImagePath = "test.jpeg"; // 替换为您的测试图像路径
             Path imagePath = Paths.get(testImagePath);
 
             if (!Files.exists(imagePath)) {
@@ -235,7 +236,7 @@ public class Main {
 
             // 打印预测结果
             System.out.println("预测结果:");
-            System.out.println(result);
+            System.out.println(result.best());
 
             // 获取最可能的类别
             String topClassName = result.best().getClassName();

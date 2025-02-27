@@ -24,17 +24,17 @@
             <version>${djl.version}</version>
         </dependency>
         <!-- Maven -->
-<!--        <dependency>-->
-<!--            <groupId>ai.djl.mxnet</groupId>-->
-<!--            <artifactId>mxnet-engine</artifactId>-->
-<!--            <version>${djl.version}</version>-->
-<!--        </dependency>-->
-        <!-- DJL PyTorch Engine -->
         <dependency>
-            <groupId>ai.djl.pytorch</groupId>
-            <artifactId>pytorch-engine</artifactId>
+            <groupId>ai.djl.mxnet</groupId>
+            <artifactId>mxnet-engine</artifactId>
             <version>${djl.version}</version>
         </dependency>
+        <!-- DJL PyTorch Engine -->
+<!--        <dependency>-->
+<!--            <groupId>ai.djl.pytorch</groupId>-->
+<!--            <artifactId>pytorch-engine</artifactId>-->
+<!--            <version>${djl.version}</version>-->
+<!--        </dependency>-->
         <!-- DJL基础数据集 - 包含ImageFolder类 -->
         <dependency>
             <groupId>ai.djl</groupId>
