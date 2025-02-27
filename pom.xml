@@ -11,55 +11,76 @@
     <properties>
         <maven.compiler.source>11</maven.compiler.source>
         <maven.compiler.target>11</maven.compiler.target>
-        <djl.version>0.20.0</djl.version>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
+        <djl.version>0.22.1</djl.version>
+        <opencv.version>4.7.0-0</opencv.version>
     </properties>
 
     <dependencies>
-        <!-- DJL API -->
+        <!-- OpenCV 依赖 -->
+        <dependency>
+            <groupId>org.openpnp</groupId>
+            <artifactId>opencv</artifactId>
+            <version>${opencv.version}</version>
+        </dependency>
+
+        <!-- DJL 核心依赖 -->
         <dependency>
             <groupId>ai.djl</groupId>
             <artifactId>api</artifactId>
             <version>${djl.version}</version>
         </dependency>
 
-        <!-- DJL PyTorch Engine -->
+        <!-- DJL 模型动物园 -->
         <dependency>
-            <groupId>ai.djl.pytorch</groupId>
-            <artifactId>pytorch-engine</artifactId>
+            <groupId>ai.djl</groupId>
+            <artifactId>model-zoo</artifactId>
             <version>${djl.version}</version>
         </dependency>
 
-        <!-- DJL PyTorch Model Zoo -->
+        <!-- DJL 基础数据集 -->
         <dependency>
-            <groupId>ai.djl.pytorch</groupId>
-            <artifactId>pytorch-model-zoo</artifactId>
+            <groupId>ai.djl</groupId>
+            <artifactId>basicdataset</artifactId>
             <version>${djl.version}</version>
         </dependency>
 
-        <!-- PyTorch Native Library -->
+        <!-- DJL OpenCV 扩展 -->
+<!--        <dependency>-->
+<!--            <groupId>ai.djl.opencv</groupId>-->
+<!--            <artifactId>opencv</artifactId>-->
+<!--            <version>${djl.version}</version>-->
+<!--        </dependency>-->
+        <!-- 添加 JavaCV 依赖 -->
         <dependency>
-            <groupId>ai.djl.pytorch</groupId>
-            <artifactId>pytorch-native-auto</artifactId>
-            <version>${djl.version}</version>
-            <scope>runtime</scope>
+            <groupId>org.bytedeco</groupId>
+            <artifactId>javacv-platform</artifactId>
+            <version>1.5.8</version>
         </dependency>
-
-        <!-- Logging -->
+        <!-- 日志框架 -->
         <dependency>
             <groupId>org.slf4j</groupId>
             <artifactId>slf4j-api</artifactId>
-            <version>1.7.30</version>
+            <version>1.7.36</version>
         </dependency>
         <dependency>
             <groupId>ch.qos.logback</groupId>
             <artifactId>logback-classic</artifactId>
-            <version>1.2.3</version>
+            <version>1.2.11</version>
+        </dependency>
+
+        <!-- 测试框架 -->
+        <dependency>
+            <groupId>junit</groupId>
+            <artifactId>junit</artifactId>
+            <version>4.13.2</version>
+            <scope>test</scope>
         </dependency>
     </dependencies>
+
     <build>
         <plugins>
+            <!-- 编译插件 -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
@@ -67,10 +88,34 @@
                 <configuration>
                     <source>${maven.compiler.source}</source>
                     <target>${maven.compiler.target}</target>
-                    <encoding>UTF-8</encoding>
                 </configuration>
+            </plugin>
+
+            <!-- 打包插件 -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-assembly-plugin</artifactId>
+                <version>3.3.0</version>
+                <configuration>
+                    <descriptorRefs>
+                        <descriptorRef>jar-with-dependencies</descriptorRef>
+                    </descriptorRefs>
+                    <archive>
+                        <manifest>
+                            <mainClass>com.hjsy.Main</mainClass>
+                        </manifest>
+                    </archive>
+                </configuration>
+                <executions>
+                    <execution>
+                        <id>make-assembly</id>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>single</goal>
+                        </goals>
+                    </execution>
+                </executions>
             </plugin>
         </plugins>
     </build>
-
 </project>
