@@ -21,7 +21,6 @@ import ai.djl.modality.cv.translator.ImageClassificationTranslator;
 import ai.djl.ndarray.types.Shape;
 import ai.djl.nn.Block;
 import ai.djl.nn.SequentialBlock;
-import ai.djl.nn.SymbolBlock;
 import ai.djl.nn.core.Linear;
 import ai.djl.repository.zoo.Criteria;
 import ai.djl.repository.zoo.ModelNotFoundException;
@@ -34,7 +33,6 @@ import ai.djl.training.dataset.Dataset;
 import ai.djl.training.evaluator.Accuracy;
 import ai.djl.training.loss.Loss;
 import ai.djl.training.optimizer.Optimizer;
-import ai.djl.translate.Pipeline;
 import ai.djl.translate.TranslateException;
 import ai.djl.translate.Translator;
 
@@ -48,47 +46,51 @@ import java.util.List;
 public class Main {
 
     public static void main(String[] args) throws IOException, ModelNotFoundException, MalformedModelException, TranslateException {
+        // 使用 PyTorch 引擎
+        String engineName = "PyTorch";
+        Engine engine = Engine.getEngine(engineName);
+        System.out.println("使用引擎: " + engineName);
+
         // 定义明确的模型路径
         Path modelDir = Paths.get("./models/");
         String modelName = "cube-detector-01";
+
         // 确保目录存在
         Files.createDirectories(modelDir);
 
-        // 检查模型文件是否存在
-        Path mxnetModelPath = modelDir.resolve(modelName + "-0000.params");
-        Path pytorchModelPath = modelDir.resolve(modelName + "-01.pt");
-
-        boolean mxnetModelExists = Files.exists(mxnetModelPath);
+        // 检查 PyTorch 模型文件是否存在
+        Path pytorchModelPath = modelDir.resolve(modelName + ".pt");
         boolean pytorchModelExists = Files.exists(pytorchModelPath);
 
         Model model;
-        String engineName = "PyTorch"; // PyTorch 或 MXNet
 
-        if (mxnetModelExists || pytorchModelExists) {
-            System.out.println("找到现有 MXNet 模型，加载中...");
-            model = Model.newInstance(modelName, Engine.getEngine(engineName).defaultDevice());
+        if (pytorchModelExists) {
+            System.out.println("找到现有 PyTorch 模型，加载中...");
+            model = Model.newInstance(modelName, engine.defaultDevice());
             model.load(modelDir, modelName);
         } else {
-            // 1. 加载预训练的ResNet50模型
+            System.out.println("没有找到现有 PyTorch 模型，创建新模型...");
+
+            // 1. 加载预训练的 ResNet50 模型，确保使用 PyTorch
             Criteria<Image, Classifications> criteria = Criteria.builder()
                     .optApplication(Application.CV.IMAGE_CLASSIFICATION)
                     .setTypes(Image.class, Classifications.class)
                     .optModelName("traced_resnet50")
-                    .optEngine(engineName)  // 或 "MXNet", 取决于您的环境
+                    .optEngine(engineName)
                     .build();
 
             ZooModel<Image, Classifications> baseModel = ModelZoo.loadModel(criteria);
 
-            // 2. 创建新模型
-            model = Model.newInstance(modelName, Engine.getEngine(engineName).defaultDevice());
+            // 2. 创建新模型，使用 PyTorch 引擎
+            model = Model.newInstance(modelName, engine.defaultDevice());
 
             // 3. 创建新的网络结构
             SequentialBlock newBlock = new SequentialBlock();
 
-            // 4. 获取预训练模型的Block
+            // 4. 获取预训练模型的 Block
             Block baseBlock = baseModel.getBlock();
 
-            // 5. 添加预训练模型的Block到新模型
+            // 5. 添加预训练模型的 Block 到新模型
             newBlock.add(baseBlock);
 
             // 6. 冻结预训练模型的参数
@@ -142,13 +144,18 @@ public class Main {
                 trainDataset.prepare();
 
                 // 可选：创建验证数据集
-                ImageFolder validationDataset = ImageFolder.builder()
-                        .setRepositoryPath(Paths.get("dataset_test")) // 如果有验证集
-                        .optPipeline(pipeline)
-                        .setSampling(32, true)
-                        .build();
-
-                validationDataset.prepare();
+                ImageFolder validationDataset = null;
+                try {
+                    validationDataset = ImageFolder.builder()
+                            .setRepositoryPath(Paths.get("dataset_test")) // 如果有验证集
+                            .optPipeline(pipeline)
+                            .setSampling(32, true)
+                            .build();
+                    validationDataset.prepare();
+                } catch (Exception e) {
+                    System.out.println("无法加载验证数据集: " + e.getMessage());
+                    validationDataset = null;
+                }
 
                 System.out.println("开始训练模型...");
                 int numEpochs = 10;
@@ -192,6 +199,7 @@ public class Main {
                     }
                 }
             }
+
             // 13. 保存训练好的模型到明确的路径
             model.save(modelDir, modelName);
             System.out.println("模型已保存到: " + modelDir.toAbsolutePath());
@@ -209,12 +217,18 @@ public class Main {
                 .optSynset(classes)
                 .build();
 
-        // 15. 加载保存的模型并创建预测器
-
+        // 15. 使用加载的模型进行预测
         try (Predictor<Image, Classifications> predictor = model.newPredictor(translator)) {
             // 16. 单个图像预测
             String testImagePath = "test.jpg"; // 替换为您的测试图像路径
-            Image img = ImageFactory.getInstance().fromFile(Paths.get(testImagePath));
+            Path imagePath = Paths.get(testImagePath);
+
+            if (!Files.exists(imagePath)) {
+                System.out.println("测试图像不存在: " + testImagePath);
+                return;
+            }
+
+            Image img = ImageFactory.getInstance().fromFile(imagePath);
 
             // 进行预测
             Classifications result = predictor.predict(img);
@@ -228,24 +242,6 @@ public class Main {
             double topProbability = result.best().getProbability();
             System.out.printf("图像最可能是: %s，概率: %.2f%%\n",
                     topClassName, topProbability * 100);
-
-            // 批量预测多个图像
-            //String testImagesDir = "path/to/test/images"; // 替换为您的测试图像文件夹路径
-            //java.io.File dir = new java.io.File(testImagesDir);
-            //java.io.File[] files = dir.listFiles((d, name) -> name.endsWith(".jpg") || name.endsWith(".png"));
-            //
-            //if (files != null) {
-            //    System.out.println("\n批量预测结果:");
-            //    for (java.io.File file : files) {
-            //        Image testImg = ImageFactory.getInstance().fromFile(file.toPath());
-            //        Classifications testResult = predictor.predict(testImg);
-            //
-            //        System.out.printf("图像 %s: 预测为 %s，概率: %.2f%%\n",
-            //                file.getName(),
-            //                testResult.best().getClassName(),
-            //                testResult.best().getProbability() * 100);
-            //    }
-            //}
         }
     }
 }

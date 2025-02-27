@@ -24,11 +24,11 @@
             <version>${djl.version}</version>
         </dependency>
         <!-- Maven -->
-        <dependency>
-            <groupId>ai.djl.mxnet</groupId>
-            <artifactId>mxnet-engine</artifactId>
-            <version>${djl.version}</version>
-        </dependency>
+<!--        <dependency>-->
+<!--            <groupId>ai.djl.mxnet</groupId>-->
+<!--            <artifactId>mxnet-engine</artifactId>-->
+<!--            <version>${djl.version}</version>-->
+<!--        </dependency>-->
         <!-- DJL PyTorch Engine -->
         <dependency>
             <groupId>ai.djl.pytorch</groupId>
