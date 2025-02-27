@@ -4,6 +4,7 @@ import ai.djl.Application;
 import ai.djl.MalformedModelException;
 import ai.djl.Model;
 import ai.djl.basicdataset.cv.classification.ImageFolder;
+import ai.djl.engine.Engine;
 import ai.djl.modality.cv.ImageFactory;
 import ai.djl.ndarray.NDList;
 import ai.djl.training.EasyTrain;
@@ -38,6 +39,7 @@ import ai.djl.translate.TranslateException;
 import ai.djl.translate.Translator;
 
 import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.Arrays;
@@ -46,131 +48,154 @@ import java.util.List;
 public class Main {
 
     public static void main(String[] args) throws IOException, ModelNotFoundException, MalformedModelException, TranslateException {
-        // 1. 加载预训练的ResNet50模型
-        Criteria<Image, Classifications> criteria = Criteria.builder()
-                .optApplication(Application.CV.IMAGE_CLASSIFICATION)
-                .setTypes(Image.class, Classifications.class)
-                .optModelName("traced_resnet50")
-                .optEngine("PyTorch")  // 或 "MXNet", 取决于您的环境
-                .build();
+        // 定义明确的模型路径
+        Path modelDir = Paths.get("./models/");
+        String modelName = "cube-detector-01";
+        // 确保目录存在
+        Files.createDirectories(modelDir);
 
-        ZooModel<Image, Classifications> baseModel = ModelZoo.loadModel(criteria);
+        // 检查模型文件是否存在
+        Path mxnetModelPath = modelDir.resolve(modelName + "-0000.params");
+        Path pytorchModelPath = modelDir.resolve(modelName + "-01.pt");
 
-        // 2. 创建新模型
-        Model model = Model.newInstance("cube-detector");
+        boolean mxnetModelExists = Files.exists(mxnetModelPath);
+        boolean pytorchModelExists = Files.exists(pytorchModelPath);
 
-        // 3. 创建新的网络结构
-        SequentialBlock newBlock = new SequentialBlock();
+        Model model;
+        String engineName = "PyTorch"; // PyTorch 或 MXNet
 
-        // 4. 获取预训练模型的Block
-        Block baseBlock = baseModel.getBlock();
-
-        // 5. 添加预训练模型的Block到新模型
-        newBlock.add(baseBlock);
-
-        // 6. 冻结预训练模型的参数
-        baseBlock.freezeParameters(true);
-
-        // 7. 添加新的分类层
-        // 这里我们使用一个适配器层来处理ResNet50的输出
-        newBlock.add(ndList -> {
-            // 假设ResNet50的输出是[batch_size, 2048, 1, 1]
-            // 我们需要将其转换为[batch_size, 2048]
-            return new NDList(ndList.get(0).squeeze());
-        });
-
-        // 添加新的全连接层，用于分类
-        newBlock.add(Linear.builder()
-                .setUnits(2)  // 2个类别：立方体和非立方体
-                .build());
-
-        // 8. 设置模型的网络结构
-        model.setBlock(newBlock);
-
-        // 9. 配置训练参数
-        TrainingConfig config = new DefaultTrainingConfig(Loss.softmaxCrossEntropyLoss())
-                .addEvaluator(new Accuracy())
-                .optOptimizer(
-                        Optimizer.adam()
-                                .build()
-                );
-
-        // 10. 创建训练器
-        try (Trainer trainer = model.newTrainer(config)) {
-            // 11. 初始化训练器
-            trainer.initialize(new Shape(32, 3, 224, 224));
-
-            // 12. 训练模型
-            // 创建数据预处理管道
-            Pipeline pipeline = new Pipeline()
-                    .add(new Resize(224, 224))
-                    .add(new ToTensor())
-                    .add(new Normalize(
-                            new float[] {0.485f, 0.456f, 0.406f},
-                            new float[] {0.229f, 0.224f, 0.225f}));
-
-            // 加载训练数据集
-            ImageFolder trainDataset = ImageFolder.builder()
-                    .setRepositoryPath(Paths.get("dataset")) // 替换为您的数据集路径
-                    .optPipeline(pipeline)
-                    .setSampling(32, true) // 批量大小为32
+        if (mxnetModelExists || pytorchModelExists) {
+            System.out.println("找到现有 MXNet 模型，加载中...");
+            model = Model.newInstance(modelName, Engine.getEngine(engineName).defaultDevice());
+            model.load(modelDir, modelName);
+        } else {
+            // 1. 加载预训练的ResNet50模型
+            Criteria<Image, Classifications> criteria = Criteria.builder()
+                    .optApplication(Application.CV.IMAGE_CLASSIFICATION)
+                    .setTypes(Image.class, Classifications.class)
+                    .optModelName("traced_resnet50")
+                    .optEngine(engineName)  // 或 "MXNet", 取决于您的环境
                     .build();
 
-            trainDataset.prepare();
+            ZooModel<Image, Classifications> baseModel = ModelZoo.loadModel(criteria);
 
-            // 可选：创建验证数据集
-            ImageFolder validationDataset = ImageFolder.builder()
-                    .setRepositoryPath(Paths.get("dataset_test")) // 如果有验证集
-                    .optPipeline(pipeline)
-                    .setSampling(32, true)
-                    .build();
+            // 2. 创建新模型
+            model = Model.newInstance(modelName, Engine.getEngine(engineName).defaultDevice());
 
-            validationDataset.prepare();
+            // 3. 创建新的网络结构
+            SequentialBlock newBlock = new SequentialBlock();
 
-            System.out.println("开始训练模型...");
-            int numEpochs = 10;
+            // 4. 获取预训练模型的Block
+            Block baseBlock = baseModel.getBlock();
 
-            // 实际训练代码
-            for (int epoch = 0; epoch < numEpochs; epoch++) {
-                System.out.printf("Epoch %d/%d\n", epoch + 1, numEpochs);
+            // 5. 添加预训练模型的Block到新模型
+            newBlock.add(baseBlock);
 
-                // 训练一个epoch
-                int batchCount = 0;
-                for (Batch batch : trainer.iterateDataset(trainDataset)) {
-                    EasyTrain.trainBatch(trainer, batch);
-                    trainer.step();
-                    batch.close();
+            // 6. 冻结预训练模型的参数
+            baseBlock.freezeParameters(true);
 
-                    // 每处理10个批次打印一次进度
-                    if (++batchCount % 10 == 0) {
-                        System.out.printf("Processed %d batches\n", batchCount);
-                    }
-                }
+            // 7. 添加新的分类层
+            // 这里我们使用一个适配器层来处理ResNet50的输出
+            newBlock.add(ndList -> {
+                // 假设ResNet50的输出是[batch_size, 2048, 1, 1]
+                // 我们需要将其转换为[batch_size, 2048]
+                return new NDList(ndList.get(0).squeeze());
+            });
 
-                // 验证
-                if (validationDataset != null) {
-                    System.out.println("Validating...");
-                    batchCount = 0;
-                    for (Batch batch : trainer.iterateDataset(validationDataset)) {
-                        EasyTrain.validateBatch(trainer, batch);
+            // 添加新的全连接层，用于分类
+            newBlock.add(Linear.builder()
+                    .setUnits(2)  // 2个类别：立方体和非立方体
+                    .build());
+
+            // 8. 设置模型的网络结构
+            model.setBlock(newBlock);
+
+            // 9. 配置训练参数
+            TrainingConfig config = new DefaultTrainingConfig(Loss.softmaxCrossEntropyLoss())
+                    .addEvaluator(new Accuracy())
+                    .optOptimizer(
+                            Optimizer.adam()
+                                    .build()
+                    );
+
+            // 10. 创建训练器
+            try (Trainer trainer = model.newTrainer(config)) {
+                // 11. 初始化训练器
+                trainer.initialize(new Shape(32, 3, 224, 224));
+
+                // 12. 训练模型
+                // 创建数据预处理管道
+                Pipeline pipeline = new Pipeline()
+                        .add(new Resize(224, 224))
+                        .add(new ToTensor())
+                        .add(new Normalize(
+                                new float[] {0.485f, 0.456f, 0.406f},
+                                new float[] {0.229f, 0.224f, 0.225f}));
+
+                // 加载训练数据集
+                ImageFolder trainDataset = ImageFolder.builder()
+                        .setRepositoryPath(Paths.get("dataset")) // 替换为您的数据集路径
+                        .optPipeline(pipeline)
+                        .setSampling(32, true) // 批量大小为32
+                        .build();
+
+                trainDataset.prepare();
+
+                // 可选：创建验证数据集
+                ImageFolder validationDataset = ImageFolder.builder()
+                        .setRepositoryPath(Paths.get("dataset_test")) // 如果有验证集
+                        .optPipeline(pipeline)
+                        .setSampling(32, true)
+                        .build();
+
+                validationDataset.prepare();
+
+                System.out.println("开始训练模型...");
+                int numEpochs = 10;
+
+                // 实际训练代码
+                for (int epoch = 0; epoch < numEpochs; epoch++) {
+                    System.out.printf("Epoch %d/%d\n", epoch + 1, numEpochs);
+
+                    // 训练一个epoch
+                    int batchCount = 0;
+                    for (Batch batch : trainer.iterateDataset(trainDataset)) {
+                        EasyTrain.trainBatch(trainer, batch);
+                        trainer.step();
                         batch.close();
 
                         // 每处理10个批次打印一次进度
                         if (++batchCount % 10 == 0) {
-                            System.out.printf("Validated %d batches\n", batchCount);
+                            System.out.printf("Processed %d batches\n", batchCount);
                         }
                     }
 
-                    // 输出训练指标
-                    System.out.println("验证结果:");
-                    for (Evaluator evaluator : trainer.getEvaluators()) {
-                        System.out.println(evaluator);
+                    // 验证
+                    if (validationDataset != null) {
+                        System.out.println("Validating...");
+                        batchCount = 0;
+                        for (Batch batch : trainer.iterateDataset(validationDataset)) {
+                            EasyTrain.validateBatch(trainer, batch);
+                            batch.close();
+
+                            // 每处理10个批次打印一次进度
+                            if (++batchCount % 10 == 0) {
+                                System.out.printf("Validated %d batches\n", batchCount);
+                            }
+                        }
+
+                        // 输出训练指标
+                        System.out.println("验证结果:");
+                        for (Evaluator evaluator : trainer.getEvaluators()) {
+                            System.out.println(evaluator);
+                        }
                     }
                 }
             }
+            // 13. 保存训练好的模型到明确的路径
+            model.save(modelDir, modelName);
+            System.out.println("模型已保存到: " + modelDir.toAbsolutePath());
         }
-        Path modelPath = Paths.get("./models/");
-        model.save(modelPath, "cube-detector-01");
 
         // 14. 创建模型推理所需的翻译器
         List<String> classes = Arrays.asList("非立方体", "立方体");
@@ -185,10 +210,8 @@ public class Main {
                 .build();
 
         // 15. 加载保存的模型并创建预测器
-        Model savedModel = Model.newInstance("cube-detector");
-        savedModel.load(modelPath, "cube-detector-01");
 
-        try (Predictor<Image, Classifications> predictor = savedModel.newPredictor(translator)) {
+        try (Predictor<Image, Classifications> predictor = model.newPredictor(translator)) {
             // 16. 单个图像预测
             String testImagePath = "test.jpg"; // 替换为您的测试图像路径
             Image img = ImageFactory.getInstance().fromFile(Paths.get(testImagePath));
