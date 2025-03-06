@@ -11,13 +11,18 @@ import okhttp3.*;
 public class OpenAIVisionAPI {
 
     private static final String API_URL = "https://4.0.wokaai.com/v1/chat/completions";
-    private static final String API_KEY = "sk-JdYZntmPsyPRP5qmWtGqGJuBHqb712gisSD8NcZCoI63KDOl"; // 替换为你的 OpenAI API 密钥
+
+    private static final String API_KEY = "sk-JdYZntmPsyPRP5qmWtGqGJuBHqb712gisSD8NcZCoI63KDOl"; // 替换为你的 中转 API 密钥
 
     public static void main(String[] args) {
         // 读取图片并转换为 Base64
-        String base64Image = encodeImageToBase64("./1231.jpg"); // 替换为图片路径
+        //String base64Image = encodeImageToBase64("./1231.jpg"); // 替换为图片路径
         //String base64Image = encodeImageToBase64("./123.jpg"); // 替换为图片路径
         //String base64Image = encodeImageToBase64("./112.png"); // 替换为图片路径
+        //String base64Image = encodeImageToBase64("./114.png"); // 替换为图片路径
+        //String base64Image = encodeImageToBase64("./no.png"); // 替换为图片路径
+        String base64Image = encodeImageToBase64("./yes.jpg"); // 替换为图片路径
+
 
         if (base64Image != null) {
             // 调用 OpenAI Vision API
@@ -59,9 +64,9 @@ public class OpenAIVisionAPI {
 
         Map<String, Object> textContent = new HashMap<>();
         textContent.put("type", "text");
-        textContent.put("text", "这个图片是不是整体上接近正方体？要求：\n" +
-                "-图形为三维结构;所有的线都存在且无多余的线;相对的边大约平行，长度大约一致\n" +
-                "-不考虑弯曲和不对称的情况\n" +
+        textContent.put("text", "标准：\n" +
+                "-如果图片中的物体8个顶点和12条边，表现出三维透视效果，则将其识别为正方体。\n" +
+                "-如果图片中的物体不满足上述条件，则将其识别为非正方体。\n" +
                 "-result为结果，枚举Y/N；score为评分，0-100整数；reason为结果的解释\n" +
                 "返回json");
 
