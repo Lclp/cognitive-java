@@ -32,16 +32,19 @@ public class Main {
         cvtColor(originalImage, grayImage, COLOR_BGR2GRAY);
 
         // 应用高斯模糊减少噪声
-        GaussianBlur(grayImage, grayImage, new Size(5, 5), 0);
+        GaussianBlur(grayImage, grayImage, new Size(9, 9), 0);
+        imwrite(imagePath + "grayImage.jpg", grayImage);
 
         // 自适应二值化 - 处理不均匀照明
         Mat binaryImage = new Mat();
         adaptiveThreshold(grayImage, binaryImage, 255, ADAPTIVE_THRESH_GAUSSIAN_C, THRESH_BINARY_INV, 11, 2);
+        imwrite(imagePath + "binaryImage.jpg", binaryImage);
 
         // 形态学闭操作，闭合线条间的小缝隙
         Mat closedImage = new Mat();
         Mat closeKernel = getStructuringElement(MORPH_RECT, new Size(5, 5));
         morphologyEx(binaryImage, closedImage, MORPH_CLOSE, closeKernel);
+        imwrite(imagePath + "closedImage.jpg", closedImage);
 
         // 边缘检测
         Mat edges = new Mat();
@@ -63,7 +66,7 @@ public class Main {
 
         // 存储过滤后的线条
         List<int[]> filteredLines = new ArrayList<>();
-
+        System.out.println("所有线条的长度"+lines.size());
         // 绘制检测到的直线
         for (long i = 0; i < lines.size(); i++) {
             int[] line = new int[4];
@@ -77,7 +80,7 @@ public class Main {
             double length = Math.sqrt(Math.pow(x2 - x1, 2) + Math.pow(y2 - y1, 2));
 
             // 只保留较长的线条
-            if (length > 30) {
+            if (length > 12) {
                 filteredLines.add(line);
                 line(resultImage, new Point(x1, y1), new Point(x2, y2),
                         new Scalar(0, 255, 0, 255), 2, LINE_8, 0);
@@ -85,7 +88,7 @@ public class Main {
         }
 
         // 保存结果图像
-        imwrite("enhanced_hough_lines_result.jpg", resultImage);
+        imwrite(imagePath + "enhanced_hough_lines_result.jpg", resultImage);
 
         try {
             // 查找轮廓 - 使用完全限定名称调用方法
@@ -271,8 +274,14 @@ public class Main {
 
     // 主函数示例
     public static void main(String[] args) {
-        String imagePath = "test.jpg";
-        boolean isCube = detectCube(imagePath);
-        System.out.println("是否为立方体: " + isCube);
+        //String imagePath = "1231.jpg";
+        //boolean isCube = detectCube(imagePath);
+        //System.out.println("no是否为立方体: " + isCube);
+        //String imagePath3 = "./pics/nocube.png";
+        //boolean isCube3 = detectCube(imagePath3);
+        //System.out.println("nocube是否为立方体: " + isCube3);
+        String imagePath1 = "./pics/yes.jpg";
+        boolean isCube2 = detectCube(imagePath1);
+        System.out.println("yes是否为立方体: " + isCube2);
     }
 }
