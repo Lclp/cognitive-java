@@ -11,8 +11,8 @@ from torch.serialization import safe_globals
 
 # Configuration
 MODEL_DIR = "./models"
-MODEL_NAME = "cube-detector-01.pth"
-IMAGE_SIZE = 224  # Standard size for ResNet models
+MODEL_NAME = "cube-detector-01-best.pth"
+IMAGE_SIZE = 512  # Standard size for ResNet models
 BATCH_SIZE = 32
 NUM_EPOCHS = 20
 PATIENCE = 5  # Early stopping patience
@@ -46,20 +46,7 @@ data_transforms = {
 def load_or_create_model():
     model_path = os.path.join(MODEL_DIR, MODEL_NAME)
 
-    # Check if model exists
-    if os.path.exists(model_path):
-        print(f"Found existing model, loading from {model_path}...")
-        try:
-            # Try loading with weights_only=False for compatibility with older PyTorch versions
-            model = torch.load(model_path, map_location=torch.device('cpu'), weights_only=False)
-            return model
-        except Exception as e:
-            print(f"Error loading model: {e}")
-            print("Creating a new model instead...")
-    else:
-        print("No existing model found, creating new model...")
-
-    # Load pre-trained ResNet50
+    # Create a new model instance
     model = models.resnet50(weights=models.ResNet50_Weights.IMAGENET1K_V1)
 
     # Freeze all parameters in the pre-trained model
@@ -69,6 +56,18 @@ def load_or_create_model():
     # Replace the final fully connected layer
     num_features = model.fc.in_features
     model.fc = nn.Linear(num_features, len(CLASSES))
+
+    # Check if model exists and load state dict if it does
+    if os.path.exists(model_path):
+        print(f"Found existing model, loading from {model_path}...")
+        try:
+            state_dict = torch.load(model_path, map_location=torch.device('cpu'))
+            model.load_state_dict(state_dict)
+        except Exception as e:
+            print(f"Error loading model: {e}")
+            print("Using newly initialized model instead...")
+    else:
+        print("No existing model found, using new model...")
 
     # Move model to the appropriate device
     model = model.to(device)
