@@ -6,6 +6,8 @@ from torch.utils.data import DataLoader
 from torchvision import datasets, transforms, models
 from tqdm import tqdm
 import numpy as np
+from PIL import Image
+from torch.serialization import safe_globals
 
 # Configuration
 MODEL_DIR = "./models"
@@ -40,166 +42,199 @@ data_transforms = {
     ]),
 }
 
+
 def load_or_create_model():
     model_path = os.path.join(MODEL_DIR, MODEL_NAME)
-    
+
     # Check if model exists
     if os.path.exists(model_path):
         print(f"Found existing model, loading from {model_path}...")
-        model = torch.load(model_path, map_location=device)
-        return model
-    
-    print("No existing model found, creating new model...")
-    
+        try:
+            # Try loading with weights_only=False for compatibility with older PyTorch versions
+            model = torch.load(model_path, map_location=torch.device('cpu'), weights_only=False)
+            return model
+        except Exception as e:
+            print(f"Error loading model: {e}")
+            print("Creating a new model instead...")
+    else:
+        print("No existing model found, creating new model...")
+
     # Load pre-trained ResNet50
-    model = models.resnet50(pretrained=True)
-    
+    model = models.resnet50(weights=models.ResNet50_Weights.IMAGENET1K_V1)
+
     # Freeze all parameters in the pre-trained model
     for param in model.parameters():
         param.requires_grad = False
-    
+
     # Replace the final fully connected layer
     num_features = model.fc.in_features
     model.fc = nn.Linear(num_features, len(CLASSES))
-    
+
     # Move model to the appropriate device
     model = model.to(device)
-    
+
     return model
+
+
+def save_model(model, path):
+    """Save model state dict only to avoid pickle issues"""
+    # Create directory if it doesn't exist
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+
+    # Save only the state dict
+    torch.save(model.state_dict(), path)
+    print(f"Model state dict saved to: {os.path.abspath(path)}")
+
+
+def load_model_state(model, path):
+    """Load model from state dict"""
+    if os.path.exists(path):
+        print(f"Loading model state from {path}...")
+        model.load_state_dict(torch.load(path, map_location=device))
+    return model
+
 
 def train_model(model, train_dataloader, val_dataloader=None):
     # Define loss function and optimizer
     criterion = nn.CrossEntropyLoss()
     # Only optimize parameters of the final layer (which are not frozen)
     optimizer = optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=LEARNING_RATE)
-    
+
     best_accuracy = 0.0
     no_improvement_count = 0
-    
+
     print("Starting model training...")
-    
+
     for epoch in range(NUM_EPOCHS):
-        print(f"Epoch {epoch+1}/{NUM_EPOCHS}")
-        
+        print(f"Epoch {epoch + 1}/{NUM_EPOCHS}")
+
         # Training phase
         model.train()
         running_loss = 0.0
         correct = 0
         total = 0
-        
+
         for inputs, labels in tqdm(train_dataloader, desc="Training"):
             inputs, labels = inputs.to(device), labels.to(device)
-            
+
             # Zero the parameter gradients
             optimizer.zero_grad()
-            
+
             # Forward pass
             outputs = model(inputs)
             loss = criterion(outputs, labels)
-            
+
             # Backward pass and optimize
             loss.backward()
             optimizer.step()
-            
+
             # Statistics
             running_loss += loss.item() * inputs.size(0)
             _, predicted = torch.max(outputs, 1)
             total += labels.size(0)
             correct += (predicted == labels).sum().item()
-        
+
         epoch_loss = running_loss / len(train_dataloader.dataset)
         epoch_acc = correct / total
         print(f"Training Loss: {epoch_loss:.4f}, Accuracy: {epoch_acc:.4f}")
-        
+
         # Validation phase
         if val_dataloader:
             model.eval()
             val_loss = 0.0
             val_correct = 0
             val_total = 0
-            
+
             with torch.no_grad():
                 for inputs, labels in tqdm(val_dataloader, desc="Validating"):
                     inputs, labels = inputs.to(device), labels.to(device)
-                    
+
                     # Forward pass
                     outputs = model(inputs)
                     loss = criterion(outputs, labels)
-                    
+
                     # Statistics
                     val_loss += loss.item() * inputs.size(0)
                     _, predicted = torch.max(outputs, 1)
                     val_total += labels.size(0)
                     val_correct += (predicted == labels).sum().item()
-            
+
             val_epoch_loss = val_loss / len(val_dataloader.dataset)
             val_epoch_acc = val_correct / val_total
             print(f"Validation Loss: {val_epoch_loss:.4f}, Accuracy: {val_epoch_acc:.4f}")
-            
+
             # Early stopping logic
             if val_epoch_acc > best_accuracy:
                 best_accuracy = val_epoch_acc
                 no_improvement_count = 0
                 # Save best model
-                torch.save(model, os.path.join(MODEL_DIR, "cube-detector-01-best.pth"))
+                save_model(model, os.path.join(MODEL_DIR, "cube-detector-01-best.pth"))
                 print(f"New best model saved with accuracy: {best_accuracy:.4f}")
             else:
                 no_improvement_count += 1
                 if no_improvement_count >= PATIENCE:
                     print(f"Early stopping triggered after {PATIENCE} epochs without improvement!")
                     break
-    
+
     # Save final model
-    torch.save(model, os.path.join(MODEL_DIR, MODEL_NAME))
-    print(f"Model saved to: {os.path.abspath(os.path.join(MODEL_DIR, MODEL_NAME))}")
-    
+    save_model(model, os.path.join(MODEL_DIR, MODEL_NAME))
+
     return model
+
 
 def predict_image(model, image_path):
     # Load and preprocess the image
-    from PIL import Image
-    
     if not os.path.exists(image_path):
         print(f"Test image does not exist: {image_path}")
         return
-    
+
     # Load image
     img = Image.open(image_path).convert('RGB')
-    
+
     # Apply transformations
     img_tensor = data_transforms['val'](img).unsqueeze(0).to(device)
-    
+
     # Set model to evaluation mode
     model.eval()
-    
+
     # Make prediction
     with torch.no_grad():
         outputs = model(img_tensor)
         probabilities = torch.nn.functional.softmax(outputs, dim=1)[0]
-        
+
     # Get the predicted class
     _, predicted_idx = torch.max(outputs, 1)
     predicted_class = CLASSES[predicted_idx.item()]
     probability = probabilities[predicted_idx.item()].item()
-    
+
     print("Prediction results:")
     print(f"Class: {predicted_class}, Probability: {probability:.4f}")
-    print(f"Image is most likely: {predicted_class}, probability: {probability*100:.2f}%")
-    
+    print(f"Image is most likely: {predicted_class}, probability: {probability * 100:.2f}%")
+
     # Return all class probabilities for reference
     class_probabilities = {CLASSES[i]: prob.item() for i, prob in enumerate(probabilities)}
     return predicted_class, probability, class_probabilities
 
+
 def main():
     # Load or create model
     model = load_or_create_model()
-    
+
+    # Check if model state exists and load it
+    model_state_path = os.path.join(MODEL_DIR, MODEL_NAME)
+    if os.path.exists(model_state_path):
+        try:
+            model = load_model_state(model, model_state_path)
+        except Exception as e:
+            print(f"Could not load model state: {e}")
+            print("Will train a new model if requested.")
+
     # Check if we need to train the model
     train_model_flag = True
-    if os.path.exists(os.path.join(MODEL_DIR, MODEL_NAME)):
+    if os.path.exists(model_state_path):
         response = input("Model already exists. Do you want to train it again? (y/n): ")
         train_model_flag = response.lower() == 'y'
-    
+
     if train_model_flag:
         # Load datasets
         print("Loading training dataset...")
@@ -208,13 +243,13 @@ def main():
                 root="dataset",
                 transform=data_transforms['train']
             )
-            train_dataloader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=4)
+            train_dataloader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=0)
             print(f"Training dataset size: {len(train_dataset)}")
             print(f"Classes: {train_dataset.classes}")
         except Exception as e:
             print(f"Error loading training dataset: {e}")
             return
-        
+
         # Load validation dataset if it exists
         val_dataloader = None
         try:
@@ -224,7 +259,7 @@ def main():
                     root="dataset_val",
                     transform=data_transforms['val']
                 )
-                val_dataloader = DataLoader(val_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=4)
+                val_dataloader = DataLoader(val_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=0)
                 print(f"Validation dataset size: {len(val_dataset)}")
             else:
                 print("Warning: No separate validation dataset found at dataset_val")
@@ -233,13 +268,14 @@ def main():
         except Exception as e:
             print(f"Error loading validation dataset: {e}")
             val_dataloader = train_dataloader
-        
+
         # Train the model
         model = train_model(model, train_dataloader, val_dataloader)
-    
+
     # Test the model
-    test_image_path = "test.jpeg"
+    test_image_path = input("Enter path to test image (default: test.jpeg): ").strip() or "112.png"
     predict_image(model, test_image_path)
+
 
 if __name__ == "__main__":
     main()
