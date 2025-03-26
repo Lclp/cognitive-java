@@ -5,12 +5,54 @@ import torch.optim as optim
 from torch.utils.data import DataLoader, WeightedRandomSampler
 from torchvision import datasets, models, transforms
 import matplotlib.pyplot as plt
-from PIL import Image
-import numpy as np
 import time
 import copy
 import random
+import numpy as np
+from PIL import Image
 
+
+class RemoveBackgroundAndFillGray(object):
+    """
+    去除图像背景并填充灰色
+
+    参数:
+        background_color (tuple): 背景色的RGB值，例如白色为(255, 255, 255)
+        tolerance (int): 颜色匹配的容差值，值越大，匹配的颜色范围越广
+        fill_color (int): 填充颜色，默认为128（中灰色）
+    """
+
+    def __init__(self, background_color=(255, 255, 255), tolerance=30, fill_color=128):
+        self.background_color = np.array(background_color)
+        self.tolerance = tolerance
+        self.fill_color = fill_color
+
+    def __call__(self, img):
+        # 将PIL图像转换为numpy数组
+        img_array = np.array(img)
+
+        # 创建背景掩码
+        # 计算每个像素与背景色的欧氏距离
+        diff = np.abs(img_array - self.background_color)
+        dist = np.sqrt(np.sum(diff ** 2, axis=2)) if len(img_array.shape) == 3 else diff
+
+        # 根据容差值创建掩码
+        mask = dist <= self.tolerance
+
+        # 创建一个全灰色图像
+        if len(img_array.shape) == 3:  # 彩色图像
+            gray_img = np.ones_like(img_array) * self.fill_color
+        else:  # 灰度图像
+            gray_img = np.ones_like(img_array) * self.fill_color
+
+        # 将背景替换为灰色
+        if len(img_array.shape) == 3:
+            img_array[mask] = self.fill_color
+        else:
+            img_array[mask] = self.fill_color
+
+        # 转回PIL图像
+        return Image.fromarray(img_array.astype(np.uint8))
 
 # 设置随机种子以确保结果可复现
 def set_seed(seed=42):
@@ -27,24 +69,29 @@ set_seed()
 # 定义类别
 CLASSES = ["cube", "not_cube"]
 
+# 当前训练次数
+times = "05"
+
 # 更强的数据增强
 data_transforms = {
     'train': transforms.Compose([
         transforms.Resize((224, 224)),
+        RemoveBackgroundAndFillGray(background_color=(255, 255, 255), tolerance=30, fill_color=128),
         transforms.RandomHorizontalFlip(p=0.5),
         transforms.RandomVerticalFlip(p=0.3),  # 添加垂直翻转
-        transforms.RandomRotation(30),  # 增加旋转角度范围
-        transforms.RandomAffine(degrees=0, translate=(0.1, 0.1), scale=(0.8, 1.2), shear=10),  # 添加仿射变换
+        transforms.RandomRotation(30, fill=128),  # 增加旋转角度范围
+        transforms.RandomAffine(degrees=0, translate=(0.1, 0.1), scale=(0.8, 1.2), shear=10, fill=128),  # 添加仿射变换
         transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1),  # 增加颜色抖动范围
         transforms.RandomGrayscale(p=0.1),  # 有时转为灰度图
         transforms.GaussianBlur(kernel_size=3, sigma=(0.1, 2.0)),  # 添加高斯模糊
-        transforms.RandomPerspective(distortion_scale=0.3, p=0.5),  # 添加透视变换
+        transforms.RandomPerspective(distortion_scale=0.3, p=0.5, fill=128),  # 添加透视变换
         transforms.ToTensor(),
         transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
         transforms.RandomErasing(p=0.2, scale=(0.02, 0.1)),  # 随机擦除部分区域
     ]),
     'val': transforms.Compose([
         transforms.Resize((224, 224)),
+        RemoveBackgroundAndFillGray(background_color=(255, 255, 255), tolerance=30, fill_color=128),
         transforms.ToTensor(),
         transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
     ]),
@@ -111,6 +158,11 @@ def load_data(data_dir="dataset", val_dir="dataset_val", batch_size=16):
 
     dataset_sizes = {x: len(image_datasets[x]) for x in ['train', 'val'] if image_datasets[x] is not None}
     class_names = image_datasets['train'].classes
+
+    try:
+        visualize_augmentations(image_datasets['train'])
+    except Exception as e:
+        print(f"Could not visualize augmentations: {e}")
 
     # 确保类别名称与我们预期的一致
     if set(class_names) != set(CLASSES):
@@ -304,7 +356,7 @@ def plot_training(train_losses, val_losses, train_accs, val_accs, epochs):
     plt.title('Accuracy over Epochs')
 
     plt.tight_layout()
-    plt.savefig('training_history.png')
+    plt.savefig(f"training_history_{times}.png")
     plt.close()
 
 
@@ -335,7 +387,7 @@ def plot_confusion_matrix(model, dataloader, class_names, device):
     plt.xlabel('Predicted')
     plt.ylabel('True')
     plt.title('Confusion Matrix')
-    plt.savefig('confusion_matrix.png')
+    plt.savefig(f"confusion_matrix_{times}.png")
     plt.close()
 
     # 确保类别名称与索引正确对应
@@ -408,7 +460,7 @@ def evaluate_with_threshold(all_probs, all_labels, class_to_idx):
     plt.ylabel('Precision')
     plt.title('Precision-Recall Curve for Cube Detection')
     plt.grid(True)
-    plt.savefig('precision_recall_curve.png')
+    plt.savefig(f"precision_recall_curve_{times}.png")
     plt.close()
 
 
@@ -436,6 +488,36 @@ def test_image(model, image_path, device):
     # 返回预测结果和概率
     return CLASSES[preds.item()], probs[0][preds.item()].item()
 
+
+def visualize_augmentations(dataset, num_samples=5):
+    """Visualize augmentations applied to images"""
+    fig, axes = plt.subplots(num_samples, 5, figsize=(15, 3 * num_samples))
+
+    for i in range(num_samples):
+        # Get a random image
+        idx = random.randint(0, len(dataset) - 1)
+        img, label = dataset[idx]
+
+        # Original image (denormalize)
+        img_np = img.numpy().transpose(1, 2, 0)
+        img_np = img_np * np.array([0.229, 0.224, 0.225]) + np.array([0.485, 0.456, 0.406])
+        img_np = np.clip(img_np, 0, 1)
+
+        axes[i, 0].imshow(img_np)
+        axes[i, 0].set_title(f"Class: {dataset.classes[label]}")
+
+        # Show 4 more augmented versions
+        for j in range(1, 5):
+            aug_img, _ = dataset[idx]
+            aug_np = aug_img.numpy().transpose(1, 2, 0)
+            aug_np = aug_np * np.array([0.229, 0.224, 0.225]) + np.array([0.485, 0.456, 0.406])
+            aug_np = np.clip(aug_np, 0, 1)
+            axes[i, j].imshow(aug_np)
+            axes[i, j].set_title(f"Augmentation {j}")
+
+    plt.tight_layout()
+    plt.savefig(f"augmentation_examples_{times}.png")
+    print(f"Saved augmentation examples to augmentation_examples_{times}.png")
 
 # 主函数
 def main():
@@ -474,7 +556,7 @@ def main():
     model = train_model(model, dataloaders, criterion, optimizer, scheduler, num_epochs=50, device=device)
 
     # 保存模型
-    torch.save(model.state_dict(), 'resnet18_cube_detection_03.pth')
+    torch.save(model.state_dict(), f"models/resnet18_cube_detection_{times}.pth")
 
     # 评估模型
     plot_confusion_matrix(model, dataloaders['val'], class_names, device)
