@@ -472,12 +472,29 @@ def prepare_datasets():
     
     return train_loader, val_loader
 
+def continuous_validation(model):
+    """Continuously validate images until user chooses to exit"""
+    print("\n===== Starting Continuous Validation Mode =====")
+    print("Enter image paths to validate, or 'N' to exit")
+    
+    while True:
+        # Get image path from user
+        test_image_path = input("\nEnter path to test image (or 'N' to exit): ").strip()
+        
+        # Check if user wants to exit
+        if test_image_path.upper() == 'N':
+            print("Exiting validation mode.")
+            break
+        
+        # If user pressed enter without typing, use default image
+        if not test_image_path:
+            test_image_path = "./pics/yes.jpg"
+            print(f"Using default image: {test_image_path}")
+        
+        # Validate the image
+        predict_image(model, test_image_path)
 
 def main():
-    # Prepare datasets
-    train_dataloader, val_dataloader = prepare_datasets()
-    if train_dataloader is None:
-        return
     
     # Load or create model
     model = load_or_create_model()
@@ -485,16 +502,18 @@ def main():
     # Check if we need to train the model
     train_model_flag = True
     if os.path.exists(os.path.join(MODEL_DIR, MODEL_NAME)):
-        response = input("Model already exists. Do you want to train it again? (y/n): ")
-        train_model_flag = response.lower() == 'y'
+        train_model_flag = False
 
     if train_model_flag:
+        # Prepare datasets
+        train_dataloader, val_dataloader = prepare_datasets()
+        if train_dataloader is None:
+            return
         # Train the model
         model = train_model(model, train_dataloader, val_dataloader)
 
     # Test the model on a specific image
-    test_image_path = input("Enter path to test image (default: ./pics/yes.jpg): ").strip() or "./pics/yes.jpg"
-    predict_image(model, test_image_path)
+    continuous_validation(model)
 
 
 if __name__ == "__main__":
