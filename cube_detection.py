@@ -11,7 +11,7 @@ from torch.serialization import safe_globals
 
 # Configuration
 MODEL_DIR = "./models"
-MODEL_NAME = "cube-detector-01-best.pth"
+MODEL_NAME = "cube-detector-01.pth"
 IMAGE_SIZE = 512  # Standard size for ResNet models
 BATCH_SIZE = 32
 NUM_EPOCHS = 20
@@ -215,6 +215,28 @@ def predict_image(model, image_path):
     return predicted_class, probability, class_probabilities
 
 
+def continuous_validation(model):
+    """Continuously validate images until user chooses to exit"""
+    print("\n===== Starting Continuous Validation Mode =====")
+    print("Enter image paths to validate, or 'N' to exit")
+
+    while True:
+        # Get image path from user
+        test_image_path = input("\nEnter path to test image (or 'N' to exit): ").strip()
+
+        # Check if user wants to exit
+        if test_image_path.upper() == 'N':
+            print("Exiting validation mode.")
+            break
+
+        # If user pressed enter without typing, use default image
+        if not test_image_path:
+            test_image_path = "./pics/yes.jpg"
+            print(f"Using default image: {test_image_path}")
+
+        # Validate the image
+        predict_image(model, test_image_path)
+
 def main():
     # Load or create model
     model = load_or_create_model()
@@ -272,8 +294,7 @@ def main():
         model = train_model(model, train_dataloader, val_dataloader)
 
     # Test the model
-    test_image_path = input("Enter path to test image (default: test.jpeg): ").strip() or "112.png"
-    predict_image(model, test_image_path)
+    continuous_validation(model)
 
 
 if __name__ == "__main__":
