@@ -10,107 +10,32 @@ import glob
 # 定义类别
 CLASSES = ["cube", "not_cube"]
 
-# 图像预处理
-data_transform = transforms.Compose([
-    transforms.Resize((224, 224)),
-    transforms.ToTensor(),
-    transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
-])
 
-# 构建与训练时相同的模型架构
-def build_model(num_classes=2):
-    model = models.resnet18(weights=None)
-    
-    # 修改模型结构，添加dropout以减少过拟合
-    num_ftrs = model.fc.in_features
-    model.fc = nn.Sequential(
-        nn.Dropout(0.4),
-        nn.Linear(num_ftrs, 512),
-        nn.ReLU(),
-        nn.Dropout(0.4),
-        nn.Linear(512, num_classes)
-    )
-    
-    return model
+# 处理透明背景的变换
+class FillTransparentBackground(object):
+    """
+    将透明背景填充为指定颜色
 
-# 加载模型
-def load_model(model_path, device):
-    model = build_model(num_classes=len(CLASSES))
-    
-    try:
-        model.load_state_dict(torch.load(model_path, map_location=device))
-        print(f"成功加载模型: {model_path}")
-    except Exception as e:
-        print(f"加载模型时出错: {e}")
-        return None
-    
-    model = model.to(device)
-    model.eval()
-    return model
+    参数:
+        fill_color (tuple): 填充颜色的RGB值，默认为白色(255, 255, 255)
+    """
 
-# 测试单个图像
-def test_image(model, image_path, device):
-    if not os.path.exists(image_path):
-        print(f"错误: 图像不存在 - {image_path}")
-        return None, None
-    
-    try:
-        # 加载并预处理图像
-        img = Image.open(image_path).convert('RGB')
-        img_tensor = data_transform(img).unsqueeze(0).to(device)
-        
-        # 预测
-        with torch.no_grad():
-            outputs = model(img_tensor)
-            probs = torch.nn.functional.softmax(outputs, dim=1)
-            _, preds = torch.max(outputs, 1)
-        
-        # 获取预测结果
-        predicted_class = CLASSES[preds.item()]
-        confidence = probs[0][preds.item()].item()
-        
-        # 显示结果
-        print(f"\n图像: {image_path}")
-        print(f"预测结果: {predicted_class}")
-        print(f"置信度: {confidence:.2%}")
-        
-        # 显示所有类别的概率
-        print("各类别概率:")
-        for i, cls in enumerate(CLASSES):
-            print(f"  {cls}: {probs[0][i].item():.2%}")
-        
-        # 可视化结果
-        try:
-            plt.figure(figsize=(6, 6))
-            plt.imshow(img)
-            plt.title(f'预测: {predicted_class} ({confidence:.2%})')
-            plt.axis('off')
-            
-            # 保存可视化结果
-            output_dir = "predictions"
-            os.makedirs(output_dir, exist_ok=True)
-            filename = os.path.basename(image_path)
-            plt.savefig(f"{output_dir}/pred_{filename}")
-            plt.close()
-            print(f"预测可视化已保存至: {output_dir}/pred_{filename}")
-        except Exception as e:
-            print(f"保存可视化结果时出错: {e}")
-        
-        return predicted_class, confidence
-    
-    except Exception as e:
-        print(f"处理图像时出错: {e}")
-        return None, None
+    def __init__(self, fill_color=(255, 255, 255)):
+        self.fill_color = fill_color
 
-# 查找可用的模型
-def find_models(models_dir="./models"):
-    if not os.path.exists(models_dir):
-        print(f"错误: 模型目录不存在 - {models_dir}")
-        return []
-    
-    model_files = glob.glob(os.path.join(models_dir, "*.pth"))
-    return model_files
+    def __call__(self, img):
+        # 检查图像是否有Alpha通道
+        if img.mode == 'RGBA':
+            # 创建一个与填充颜色相同的背景
+            background = Image.new('RGBA', img.size, self.fill_color + (255,))
+            # 将原图与背景合并
+            img = Image.alpha_composite(background, img)
+            # 转换回RGB模式
+            img = img.convert('RGB')
+        return img
 
+
+# 自定义背景去除变换
 class RemoveBackgroundAndFillGray(object):
     """
     去除图像背景并填充灰色
@@ -154,24 +79,174 @@ class RemoveBackgroundAndFillGray(object):
         return Image.fromarray(img_array.astype(np.uint8))
 
 
+# 修改图像预处理，添加透明背景处理和背景去除步骤
+data_transform = transforms.Compose([
+    FillTransparentBackground(fill_color=(255, 255, 255)),  # 先处理透明背景
+    transforms.Resize((224, 224)),
+    RemoveBackgroundAndFillGray(background_color=(255, 255, 255), tolerance=30, fill_color=128),  # 然后去除背景
+    transforms.ToTensor(),
+    transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+])
+
+
+# 构建与训练时相同的模型架构
+def build_model(num_classes=2):
+    model = models.resnet18(weights=None)
+
+    # 修改模型结构，添加dropout以减少过拟合
+    num_ftrs = model.fc.in_features
+    model.fc = nn.Sequential(
+        nn.Dropout(0.4),
+        nn.Linear(num_ftrs, 512),
+        nn.ReLU(),
+        nn.Dropout(0.4),
+        nn.Linear(512, num_classes)
+    )
+
+    return model
+
+
+# 加载模型
+def load_model(model_path, device):
+    model = build_model(num_classes=len(CLASSES))
+
+    try:
+        model.load_state_dict(torch.load(model_path, map_location=device))
+        print(f"成功加载模型: {model_path}")
+    except Exception as e:
+        print(f"加载模型时出错: {e}")
+        return None
+
+    model = model.to(device)
+    model.eval()
+    return model
+
+
+# 测试单个图像
+def test_image(model, image_path, device):
+    if not os.path.exists(image_path):
+        print(f"错误: 图像不存在 - {image_path}")
+        return None, None
+
+    try:
+        # 加载图像 - 保留透明通道(如果有)
+        img = Image.open(image_path)
+
+        # 保存原始图像用于显示
+        original_img = img.copy()
+
+        # 处理透明背景(如果有)
+        img_white_bg = FillTransparentBackground()(img)
+
+        # 去除背景并填充灰色
+        img_gray_bg = RemoveBackgroundAndFillGray()(img_white_bg)
+
+        # 应用剩余的预处理并转换为tensor
+        img_tensor = transforms.Compose([
+            transforms.Resize((224, 224)),
+            transforms.ToTensor(),
+            transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+        ])(img_gray_bg).unsqueeze(0).to(device)
+
+        # 预测
+        with torch.no_grad():
+            outputs = model(img_tensor)
+            probs = torch.nn.functional.softmax(outputs, dim=1)
+            _, preds = torch.max(outputs, 1)
+
+        # 获取预测结果
+        predicted_class = CLASSES[preds.item()]
+        confidence = probs[0][preds.item()].item()
+
+        # 显示结果
+        print(f"\n图像: {image_path}")
+        print(f"预测结果: {predicted_class}")
+        print(f"置信度: {confidence:.2%}")
+
+        # 显示所有类别的概率
+        print("各类别概率:")
+        for i, cls in enumerate(CLASSES):
+            print(f"  {cls}: {probs[0][i].item():.2%}")
+
+        # 可视化结果 - 显示原始图像、白色背景图像和灰色背景图像
+        try:
+            plt.figure(figsize=(15, 5))
+
+            # 显示原始图像
+            plt.subplot(1, 3, 1)
+
+            # 如果是RGBA图像，需要特殊处理显示
+            if original_img.mode == 'RGBA':
+                # 创建白色背景
+                bg = Image.new('RGB', original_img.size, (255, 255, 255))
+                # 粘贴原图到白色背景上，使用Alpha通道作为蒙版
+                bg.paste(original_img, (0, 0), original_img)
+                plt.imshow(bg)
+            else:
+                plt.imshow(original_img)
+
+            plt.title('原始图像')
+            plt.axis('off')
+
+            # 显示填充白色背景后的图像
+            plt.subplot(1, 3, 2)
+            plt.imshow(img_white_bg)
+            plt.title('白色背景')
+            plt.axis('off')
+
+            # 显示去除背景填充灰色后的图像
+            plt.subplot(1, 3, 3)
+            plt.imshow(img_gray_bg)
+            plt.title(f'灰色背景\n预测: {predicted_class} ({confidence:.2%})')
+            plt.axis('off')
+
+            # 保存可视化结果
+            output_dir = "predictions"
+            os.makedirs(output_dir, exist_ok=True)
+            filename = os.path.basename(image_path)
+            plt.savefig(f"{output_dir}/pred_{filename}")
+            plt.close()
+            print(f"预测可视化已保存至: {output_dir}/pred_{filename}")
+        except Exception as e:
+            print(f"保存可视化结果时出错: {e}")
+
+        return predicted_class, confidence
+
+    except Exception as e:
+        print(f"处理图像时出错: {e}")
+        import traceback
+        traceback.print_exc()
+        return None, None
+
+
+# 查找可用的模型
+def find_models(models_dir="./models"):
+    if not os.path.exists(models_dir):
+        print(f"错误: 模型目录不存在 - {models_dir}")
+        return []
+
+    model_files = glob.glob(os.path.join(models_dir, "*.pth"))
+    return model_files
+
+
 # 主函数
 def main():
     # 检查是否有可用的GPU
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     print(f"使用设备: {device}")
-    
+
     # 查找可用的模型
     model_files = find_models()
-    
+
     if not model_files:
         print("错误: 未找到模型文件。请先运行cube_detection.py训练模型。")
         return
-    
+
     # 显示可用的模型
     print("\n可用的模型:")
     for i, model_file in enumerate(model_files):
-        print(f"{i+1}. {model_file}")
-    
+        print(f"{i + 1}. {model_file}")
+
     # 选择模型
     selection = input("\n请选择要使用的模型 (输入编号): ")
     try:
@@ -182,31 +257,32 @@ def main():
     except:
         print("使用最新的模型...")
         selected_model = model_files[-1]
-    
+
     # 加载模型
     model = load_model(selected_model, device)
     if model is None:
         return
-    
+
     print("\n=== 图像验证模式 ===")
     print("请输入图像路径进行验证，输入'N'退出")
-    
+
     # 持续验证图像
     while True:
         image_path = input("\n请输入图像路径: ").strip()
-        
+
         # 检查是否退出
         if image_path.upper() == 'N':
             print("退出验证模式。")
             break
-        
+
         # 如果路径为空，使用默认图像
         if not image_path:
             image_path = "./pics/yes.jpg"
             print(f"使用默认图像: {image_path}")
-        
+
         # 测试图像
         test_image(model, image_path, device)
+
 
 if __name__ == "__main__":
     main()

@@ -70,24 +70,24 @@ set_seed()
 CLASSES = ["cube", "not_cube"]
 
 # 当前训练次数
-times = "05"
+times = "06"
 
 # 更强的数据增强
 data_transforms = {
     'train': transforms.Compose([
         transforms.Resize((224, 224)),
         RemoveBackgroundAndFillGray(background_color=(255, 255, 255), tolerance=30, fill_color=128),
-        transforms.RandomHorizontalFlip(p=0.5),
+        # transforms.RandomHorizontalFlip(p=0.5),
         transforms.RandomVerticalFlip(p=0.3),  # 添加垂直翻转
         transforms.RandomRotation(30, fill=128),  # 增加旋转角度范围
         transforms.RandomAffine(degrees=0, translate=(0.1, 0.1), scale=(0.8, 1.2), shear=10, fill=128),  # 添加仿射变换
         transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1),  # 增加颜色抖动范围
         transforms.RandomGrayscale(p=0.1),  # 有时转为灰度图
-        transforms.GaussianBlur(kernel_size=3, sigma=(0.1, 2.0)),  # 添加高斯模糊
+        # transforms.GaussianBlur(kernel_size=3, sigma=(0.1, 2.0)),  # 添加高斯模糊
         transforms.RandomPerspective(distortion_scale=0.3, p=0.5, fill=128),  # 添加透视变换
         transforms.ToTensor(),
         transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
-        transforms.RandomErasing(p=0.2, scale=(0.02, 0.1)),  # 随机擦除部分区域
+        # transforms.RandomErasing(p=0.2, scale=(0.02, 0.1)),  # 随机擦除部分区域
     ]),
     'val': transforms.Compose([
         transforms.Resize((224, 224)),
